@@ -155,73 +155,109 @@ function Get-UupDumpKeys($value) {
     return @()
 }
 
-function Resolve-UupDumpPrimaryCompatibleBuild([string]$build, [string]$arch, [string]$lang, [string]$edition, [string]$excludeId) {
+function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
+    if ($null -eq $updateInfo) {
+        return $updateId
+    }
+
+    $build = if ($updateInfo.PSObject.Properties.Name -contains 'build') { $updateInfo.build } else { $null }
     if ([string]::IsNullOrWhiteSpace($build)) {
-        return $null
+        return $updateId
     }
 
     try {
-        $listResult = Invoke-UupDumpApi listid @{ search = $build }
+        $listIdResult = Invoke-UupDumpApi listid @{ search = $build }
     } catch {
-        return $null
+        return $updateId
     }
 
-    $rows = Get-UupDumpBuildRows $listResult.response.builds
-    foreach ($row in $rows) {
-        if (-not ($row.PSObject.Properties.Name -contains 'uuid')) {
+    $buildRows = Get-UupDumpBuildRows $listIdResult.response.builds
+    if ($buildRows.Count -eq 0) {
+        return $updateId
+    }
+
+    $arch = if ($updateInfo.PSObject.Properties.Name -contains 'arch') { $updateInfo.arch } else { $null }
+    $title = if ($updateInfo.PSObject.Properties.Name -contains 'title') { $updateInfo.title } else { '' }
+
+    $fallbackId = $updateId
+    $preferredSibling = $null
+    $secondarySibling = $null
+
+    foreach ($row in $buildRows) {
+        if ($null -eq $row -or $row.PSObject.Properties.Name -notcontains 'uuid' -or $row.PSObject.Properties.Name -notcontains 'title') {
             continue
         }
 
-        $candidateId = $row.uuid
-        if ([string]::IsNullOrWhiteSpace($candidateId) -or $candidateId -eq $excludeId) {
+        if ($arch -and $row.PSObject.Properties.Name -contains 'arch' -and $row.arch -ne $arch) {
             continue
         }
 
-        if (-not [string]::IsNullOrWhiteSpace($arch) -and ($row.PSObject.Properties.Name -contains 'arch')) {
-            if ($row.arch -ne $arch) {
-                continue
-            }
-        }
-
-        try {
-            $langResult = Invoke-UupDumpApi listlangs @{ id = $candidateId }
-        } catch {
+        if ($row.uuid -eq $updateId) {
+            $fallbackId = $row.uuid
             continue
         }
 
-        $langResponse = if ($langResult -and $langResult.PSObject.Properties.Name -contains 'response') { $langResult.response } else { $null }
-        $langFancy = if ($langResponse -and $langResponse.PSObject.Properties.Name -contains 'langFancyNames') { $langResponse.langFancyNames } else { $null }
-        $candidateLangs = @(Get-UupDumpKeys $langFancy)
-        if ($candidateLangs.Count -eq 0 -and $langResponse -and $langResponse.PSObject.Properties.Name -contains 'langList') {
-            $candidateLangs = @($langResponse.langList)
+        if ($row.title -match 'Cumulative Update') {
+            return $row.uuid
         }
 
-        if ($candidateLangs -notcontains $lang) {
+        if ($row.title -match '^Update for Windows|^Security Update for|^Update for Microsoft server operating system') {
+            $preferredSibling = $row.uuid
             continue
         }
 
-        try {
-            $editionResult = Invoke-UupDumpApi listeditions @{ id = $candidateId; lang = $lang }
-        } catch {
-            continue
-        }
-
-        $editionResponse = if ($editionResult -and $editionResult.PSObject.Properties.Name -contains 'response') { $editionResult.response } else { $null }
-        $editionFancy = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
-        $candidateEditions = @(Get-UupDumpKeys $editionFancy)
-
-        if ($candidateEditions -contains $edition) {
-            $candidateUpdateInfo = if ($langResponse -and $langResponse.PSObject.Properties.Name -contains 'updateInfo') { $langResponse.updateInfo } else { $null }
-            return [PSCustomObject]@{
-                id = $candidateId
-                langs = $candidateLangs
-                editions = $candidateEditions
-                updateInfo = $candidateUpdateInfo
-            }
+        if ($row.title -match '^Feature update to') {
+            $secondarySibling = $row.uuid
         }
     }
 
-    return $null
+    if ($title -match 'version\s+\d{2}H\d|version\s+\d+\.\d+') {
+        if ($preferredSibling) {
+            return $preferredSibling
+        }
+
+        if ($secondarySibling) {
+            return $secondarySibling
+        }
+    }
+
+    return $fallbackId
+}
+
+function Test-UupDumpPackageAvailability([string]$webBaseUrl, [string]$id, [string]$edition, [string]$virtualEdition) {
+    $query = New-QueryString @{
+        id = $id
+        pack = 'en-us'
+        edition = $edition
+    }
+    $uri = "$webBaseUrl/get.php?$query"
+
+    $body = if ($virtualEdition) {
+        @{
+            autodl = 3
+            updates = 1
+            cleanup = 1
+            'virtualEditions[]' = $virtualEdition
+        }
+    } else {
+        @{
+            autodl = 2
+            updates = 1
+            cleanup = 1
+        }
+    }
+
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("uup-probe-" + [guid]::NewGuid().ToString('N') + '.zip')
+    try {
+        Invoke-WebRequest -UseBasicParsing -Method Post -Uri $uri -Body $body -OutFile $tmp | Out-Null
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if (Test-Path $tmp) {
+            Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-UupDumpIso($name, $target) {
@@ -312,18 +348,43 @@ function Get-UupDumpIso($name, $target) {
                 $langs = @($response.langList)
             }
 
-            $editionsFromPrimaryResolver = @()
             if ($langs.Count -eq 0) {
-                Write-Host "Primary listlangs returned no languages. Trying alternate Railway build ID."
-                $resolvedPrimary = Resolve-UupDumpPrimaryCompatibleBuild $_.build $_.arch 'en-us' $target.edition $id
-                if ($resolvedPrimary) {
-                    $id = $resolvedPrimary.id
-                    $langs = @($resolvedPrimary.langs)
-                    $editionsFromPrimaryResolver = @($resolvedPrimary.editions)
-                    if ($resolvedPrimary.updateInfo) {
-                        $updateInfo = $resolvedPrimary.updateInfo
+                $resolvedId = Resolve-UupDumpPrimaryPackSourceId $id $updateInfo
+                if ($resolvedId -ne $id) {
+                    Write-Host "Primary listlangs empty for $id. Trying sibling source id $resolvedId."
+                    try {
+                        $siblingResult = Invoke-UupDumpApi listlangs @{ id = $resolvedId }
+                        $siblingResponse = if ($siblingResult -and $siblingResult.PSObject.Properties.Name -contains 'response') { $siblingResult.response } else { $null }
+                        if ($siblingResponse -and $siblingResponse.PSObject.Properties.Name -contains 'updateInfo') {
+                            $updateInfo = $siblingResponse.updateInfo
+                        }
+                        $siblingLangFancyNames = if ($siblingResponse -and $siblingResponse.PSObject.Properties.Name -contains 'langFancyNames') { $siblingResponse.langFancyNames } else { $null }
+                        $siblingLangs = @(Get-UupDumpKeys $siblingLangFancyNames)
+                        if ($siblingLangs.Count -eq 0 -and $siblingResponse -and $siblingResponse.PSObject.Properties.Name -contains 'langList') {
+                            $siblingLangs = @($siblingResponse.langList)
+                        }
+
+                        if ($siblingLangs.Count -gt 0) {
+                            $langs = $siblingLangs
+                            $id = $resolvedId
+                            $_ | Add-Member -NotePropertyMembers @{ uuid = $resolvedId } -Force
+                        }
+                    } catch {
+                        Write-Host "WARN: primary sibling listlangs failed: $_"
                     }
-                    Write-Host "Using alternate Railway build ID $id for metadata and downloads."
+                }
+            }
+
+            $validatedPrimaryCombo = $false
+            if ($langs.Count -eq 0) {
+                $validatedPrimaryCombo = Test-UupDumpPackageAvailability `
+                    -webBaseUrl $UUP_WEB_BASE_URL `
+                    -id $id `
+                    -edition $target.edition `
+                    -virtualEdition $target.virtualEdition
+                if ($validatedPrimaryCombo) {
+                    Write-Host "Primary metadata is incomplete but package probe succeeded on Railway for $id."
+                    $langs = @('en-us')
                 }
             }
 
@@ -354,16 +415,14 @@ function Get-UupDumpIso($name, $target) {
             $_ | Add-Member -NotePropertyMembers @{
                 langs = $langs
                 info = $updateInfo
-                selectedId = $id
             } -Force
             $editions = if ($langs -contains 'en-us') {
-                Write-Host "Getting the $name $id editions metadata"
-                $editionKeys = @()
-                if ($editionsFromPrimaryResolver.Count -gt 0) {
-                    $editionKeys = @($editionsFromPrimaryResolver)
-                }
-                try {
-                    if ($editionKeys.Count -eq 0) {
+                if ($validatedPrimaryCombo) {
+                    @($target.edition)
+                } else {
+                    Write-Host "Getting the $name $id editions metadata"
+                    $editionKeys = @()
+                    try {
                         $result = Invoke-UupDumpApi listeditions @{
                             id = $id
                             lang = 'en-us'
@@ -371,33 +430,33 @@ function Get-UupDumpIso($name, $target) {
                         $editionResponse = if ($result -and $result.PSObject.Properties.Name -contains 'response') { $result.response } else { $null }
                         $editionFancyNames = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
                         $editionKeys = @(Get-UupDumpKeys $editionFancyNames)
-                    }
-                } catch {
-                    Write-Host "WARN: primary listeditions failed: $_"
-                }
-
-                if ($editionKeys.Count -eq 0) {
-                    Write-Host "Primary listeditions returned no editions. Retrying upstream."
-                    try {
-                        $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
-                            id = $id
-                            lang = 'en-us'
-                        }
-                        $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
-                        $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
-                        $editionKeys = @(Get-UupDumpKeys $fallbackEditionFancyNames)
-                        if ($editionKeys.Count -gt 0) {
-                            $_ | Add-Member -NotePropertyMembers @{
-                                sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
-                                sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
-                            } -Force
-                        }
                     } catch {
-                        Write-Host "WARN: upstream listeditions fallback failed: $_"
+                        Write-Host "WARN: primary listeditions failed: $_"
                     }
-                }
 
-                $editionKeys
+                    if ($editionKeys.Count -eq 0) {
+                        Write-Host "Primary listeditions returned no editions. Retrying upstream."
+                        try {
+                            $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
+                                id = $id
+                                lang = 'en-us'
+                            }
+                            $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
+                            $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
+                            $editionKeys = @(Get-UupDumpKeys $fallbackEditionFancyNames)
+                            if ($editionKeys.Count -gt 0) {
+                                $_ | Add-Member -NotePropertyMembers @{
+                                    sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
+                                    sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
+                                } -Force
+                            }
+                        } catch {
+                            Write-Host "WARN: upstream listeditions fallback failed: $_"
+                        }
+                    }
+
+                    $editionKeys
+                }
             } else {
                 Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 @()
@@ -437,11 +496,7 @@ function Get-UupDumpIso($name, $target) {
         } `
         | Select-Object -First 1 `
         | ForEach-Object {
-            $id = if ($_.PSObject.Properties.Name -contains 'selectedId') {
-                $_.selectedId
-            } else {
-                $_.uuid
-            }
+            $id = $_.uuid
             $webBaseUrl = if ($_.PSObject.Properties.Name -contains 'sourceWebBaseUrl') {
                 $_.sourceWebBaseUrl
             } else {
