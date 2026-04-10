@@ -32,6 +32,7 @@ $TARGETS = @{
 
 $UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
 $UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
+$UUP_JSON_API_FALLBACK_BASE_URL = 'https://uupdump.net/json-api'
 
 function New-QueryString([hashtable]$parameters) {
     @($parameters.GetEnumerator() | ForEach-Object {
@@ -57,6 +58,26 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
         }
     }
     throw "timeout making the uup-dump api $name request"
+}
+
+function Invoke-UupDumpApiFallback([string]$name, [hashtable]$body) {
+    # Fallback to upstream when the Railway API has incomplete transient metadata.
+    for ($n = 0; $n -lt 5; ++$n) {
+        if ($n) {
+            Write-Host "Waiting a bit before retrying the upstream uup-dump api ${name} request #$n"
+            Start-Sleep -Seconds 10
+            Write-Host "Retrying the upstream uup-dump api ${name} request #$n"
+        }
+        try {
+            return Invoke-RestMethod `
+                -Method Get `
+                -Uri "$UUP_JSON_API_FALLBACK_BASE_URL/$name.php" `
+                -Body $body
+        } catch {
+            Write-Host "WARN: failed the upstream uup-dump api $name request: $_"
+        }
+    }
+    throw "timeout making the upstream uup-dump api $name request"
 }
 
 function Get-UupDumpBuildRows($builds) {
@@ -176,24 +197,96 @@ function Get-UupDumpIso($name, $target) {
             $result = Invoke-UupDumpApi listlangs @{
                 id = $id
             }
-            if ($result.response.updateInfo.build -ne $_.build) {
-                throw 'for some reason listlangs returned an unexpected build'
+            $response = $null
+            if ($result -and $result.PSObject.Properties.Name -contains 'response') {
+                $response = $result.response
             }
-            $langs = @(Get-UupDumpKeys $result.response.langFancyNames)
-            if ($langs.Count -eq 0 -and $result.response.PSObject.Properties.Name -contains 'langList') {
-                $langs = @($result.response.langList)
+            $updateInfo = $null
+            if ($response) {
+                if ($response.PSObject.Properties.Name -contains 'updateInfo') {
+                    $updateInfo = $response.updateInfo
+                }
             }
+
+            if ($null -eq $updateInfo) {
+                Write-Host "Skipping. listlangs returned no updateInfo."
+                $updateInfo = [PSCustomObject]@{
+                    title = $_.title
+                    build = $_.build
+                    ring = $null
+                    flight = $null
+                    arch = $null
+                }
+            } elseif ($updateInfo.PSObject.Properties.Name -notcontains 'build') {
+                Write-Host "Skipping. listlangs updateInfo.build is missing."
+                $updateInfo | Add-Member -NotePropertyMembers @{ build = $_.build } -Force
+            }
+
+            if ($updateInfo.build -ne $_.build) {
+                Write-Host "Skipping. listlangs returned mismatched build=$($updateInfo.build). Expected build=$($_.build)."
+            }
+            $langFancyNames = $null
+            if ($response -and $response.PSObject.Properties.Name -contains 'langFancyNames') {
+                $langFancyNames = $response.langFancyNames
+            }
+            $langs = @(Get-UupDumpKeys $langFancyNames)
+            if ($langs.Count -eq 0 -and $response -and $response.PSObject.Properties.Name -contains 'langList') {
+                $langs = @($response.langList)
+            }
+
+            if ($langs.Count -eq 0) {
+                Write-Host "Primary listlangs returned no languages. Retrying upstream."
+                try {
+                    $fallbackResult = Invoke-UupDumpApiFallback listlangs @{ id = $id }
+                    $fallbackResponse = if ($fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
+                    if ($fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'updateInfo') {
+                        $updateInfo = $fallbackResponse.updateInfo
+                    }
+                    $fallbackLangFancyNames = if ($fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'langFancyNames') { $fallbackResponse.langFancyNames } else { $null }
+                    $langs = @(Get-UupDumpKeys $fallbackLangFancyNames)
+                    if ($langs.Count -eq 0 -and $fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'langList') {
+                        $langs = @($fallbackResponse.langList)
+                    }
+                } catch {
+                    Write-Host "WARN: upstream listlangs fallback failed: $_"
+                }
+            }
+
             $_ | Add-Member -NotePropertyMembers @{
                 langs = $langs
-                info = $result.response.updateInfo
+                info = $updateInfo
             } -Force
             $editions = if ($langs -contains 'en-us') {
                 Write-Host "Getting the $name $id editions metadata"
-                $result = Invoke-UupDumpApi listeditions @{
-                    id = $id
-                    lang = 'en-us'
+                $editionKeys = @()
+                try {
+                    $result = Invoke-UupDumpApi listeditions @{
+                        id = $id
+                        lang = 'en-us'
+                    }
+                    $editionResponse = if ($result -and $result.PSObject.Properties.Name -contains 'response') { $result.response } else { $null }
+                    $editionFancyNames = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
+                    $editionKeys = @(Get-UupDumpKeys $editionFancyNames)
+                } catch {
+                    Write-Host "WARN: primary listeditions failed: $_"
                 }
-                @(Get-UupDumpKeys $result.response.editionFancyNames)
+
+                if ($editionKeys.Count -eq 0) {
+                    Write-Host "Primary listeditions returned no editions. Retrying upstream."
+                    try {
+                        $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
+                            id = $id
+                            lang = 'en-us'
+                        }
+                        $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
+                        $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
+                        $editionKeys = @(Get-UupDumpKeys $fallbackEditionFancyNames)
+                    } catch {
+                        Write-Host "WARN: upstream listeditions fallback failed: $_"
+                    }
+                }
+
+                $editionKeys
             } else {
                 Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 @()
@@ -294,6 +387,10 @@ function Get-IsoWindowsImages($isoPath) {
 
 function Get-WindowsIso($name, $destinationDirectory) {
     $iso = Get-UupDumpIso $name $TARGETS.$name
+
+    if ($null -eq $iso) {
+        throw "no matching build found for $name (ring/lang/edition filters)"
+    }
 
     # ensure the build is a version number.
     if ($iso.build -notmatch '^\d+\.\d+$') {
