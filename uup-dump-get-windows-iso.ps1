@@ -32,6 +32,7 @@ $TARGETS = @{
 
 $UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
 $UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
+$UUP_FALLBACK_WEB_BASE_URL = 'https://uupdump.net'
 $UUP_JSON_API_FALLBACK_BASE_URL = 'https://uupdump.net/json-api'
 
 function New-QueryString([hashtable]$parameters) {
@@ -255,6 +256,12 @@ function Get-UupDumpIso($name, $target) {
                     if ($langs.Count -eq 0 -and $fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'langList') {
                         $langs = @($fallbackResponse.langList)
                     }
+                    if ($langs.Count -gt 0) {
+                        $_ | Add-Member -NotePropertyMembers @{
+                            sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
+                            sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
+                        } -Force
+                    }
                 } catch {
                     Write-Host "WARN: upstream listlangs fallback failed: $_"
                 }
@@ -289,6 +296,12 @@ function Get-UupDumpIso($name, $target) {
                         $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
                         $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
                         $editionKeys = @(Get-UupDumpKeys $fallbackEditionFancyNames)
+                        if ($editionKeys.Count -gt 0) {
+                            $_ | Add-Member -NotePropertyMembers @{
+                                sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
+                                sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
+                            } -Force
+                        }
                     } catch {
                         Write-Host "WARN: upstream listeditions fallback failed: $_"
                     }
@@ -335,6 +348,16 @@ function Get-UupDumpIso($name, $target) {
         | Select-Object -First 1 `
         | ForEach-Object {
             $id = $_.uuid
+            $webBaseUrl = if ($_.PSObject.Properties.Name -contains 'sourceWebBaseUrl') {
+                $_.sourceWebBaseUrl
+            } else {
+                $UUP_WEB_BASE_URL
+            }
+            $jsonApiBaseUrl = if ($_.PSObject.Properties.Name -contains 'sourceJsonApiBaseUrl') {
+                $_.sourceJsonApiBaseUrl
+            } else {
+                $UUP_JSON_API_BASE_URL
+            }
             [PSCustomObject]@{
                 name = $name
                 title = $_.title
@@ -342,13 +365,13 @@ function Get-UupDumpIso($name, $target) {
                 id = $id
                 edition = $target.edition
                 virtualEdition = $target.virtualEdition
-                apiUrl = "$UUP_JSON_API_BASE_URL/get.php?" + (New-QueryString @{
+                apiUrl = "$jsonApiBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
                     lang = 'en-us'
                     edition = $target.edition
                     #noLinks = '1' # do not return the files download urls.
                 })
-                downloadUrl = "$UUP_WEB_BASE_URL/download.php?" + (New-QueryString @{
+                downloadUrl = "$webBaseUrl/download.php?" + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
@@ -358,7 +381,7 @@ function Get-UupDumpIso($name, $target) {
                 #           autodl=2 updates=1 cleanup=1
                 #           OR
                 #           autodl=3 updates=1 cleanup=1 virtualEditions[]=Enterprise
-                downloadPackageUrl = "$UUP_WEB_BASE_URL/get.php?" + (New-QueryString @{
+                downloadPackageUrl = "$webBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
