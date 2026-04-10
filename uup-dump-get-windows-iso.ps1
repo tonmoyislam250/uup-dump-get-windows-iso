@@ -30,7 +30,8 @@ $TARGETS = @{
     }
 }
 
-$UUP_API_BASE_URL = 'https://uup-api-production.up.railway.app'
+$UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
+$UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
 
 function New-QueryString([hashtable]$parameters) {
     @($parameters.GetEnumerator() | ForEach-Object {
@@ -49,7 +50,7 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
         try {
             return Invoke-RestMethod `
                 -Method Get `
-                -Uri "$UUP_API_BASE_URL/$name.php" `
+                -Uri "$UUP_JSON_API_BASE_URL/$name.php" `
                 -Body $body
         } catch {
             Write-Host "WARN: failed the uup-dump api $name request: $_"
@@ -66,7 +67,7 @@ function Get-UupDumpIso($name, $target) {
     $result.response.builds.PSObject.Properties `
         | ForEach-Object {
             $id = $_.Value.uuid
-            $uupDumpUrl = "$UUP_API_BASE_URL/selectlang.php?" + (New-QueryString @{
+            $uupDumpUrl = "$UUP_WEB_BASE_URL/selectlang.php?" + (New-QueryString @{
                 id = $id
             })
             Write-Host "Processing $name $id ($uupDumpUrl)"
@@ -165,13 +166,13 @@ function Get-UupDumpIso($name, $target) {
                 id = $id
                 edition = $target.edition
                 virtualEdition = $target.virtualEdition
-                apiUrl = "$UUP_API_BASE_URL/get.php?" + (New-QueryString @{
+                apiUrl = "$UUP_JSON_API_BASE_URL/get.php?" + (New-QueryString @{
                     id = $id
                     lang = 'en-us'
                     edition = $target.edition
                     #noLinks = '1' # do not return the files download urls.
                 })
-                downloadUrl = "$UUP_API_BASE_URL/download.php?" + (New-QueryString @{
+                downloadUrl = "$UUP_WEB_BASE_URL/download.php?" + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
@@ -181,7 +182,7 @@ function Get-UupDumpIso($name, $target) {
                 #           autodl=2 updates=1 cleanup=1
                 #           OR
                 #           autodl=3 updates=1 cleanup=1 virtualEditions[]=Enterprise
-                downloadPackageUrl = "$UUP_API_BASE_URL/get.php?" + (New-QueryString @{
+                downloadPackageUrl = "$UUP_WEB_BASE_URL/get.php?" + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
