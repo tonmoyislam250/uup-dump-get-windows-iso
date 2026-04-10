@@ -34,7 +34,6 @@ $UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
 $UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
 $UUP_FALLBACK_WEB_BASE_URL = 'https://uupdump.net'
 $UUP_JSON_API_FALLBACK_BASE_URL = 'https://uupdump.net/json-api'
-$DEFAULT_UUP_LANG = 'en-us'
 
 function New-QueryString([hashtable]$parameters) {
     @($parameters.GetEnumerator() | ForEach-Object {
@@ -156,6 +155,75 @@ function Get-UupDumpKeys($value) {
     return @()
 }
 
+function Resolve-UupDumpPrimaryCompatibleBuild([string]$build, [string]$arch, [string]$lang, [string]$edition, [string]$excludeId) {
+    if ([string]::IsNullOrWhiteSpace($build)) {
+        return $null
+    }
+
+    try {
+        $listResult = Invoke-UupDumpApi listid @{ search = $build }
+    } catch {
+        return $null
+    }
+
+    $rows = Get-UupDumpBuildRows $listResult.response.builds
+    foreach ($row in $rows) {
+        if (-not ($row.PSObject.Properties.Name -contains 'uuid')) {
+            continue
+        }
+
+        $candidateId = $row.uuid
+        if ([string]::IsNullOrWhiteSpace($candidateId) -or $candidateId -eq $excludeId) {
+            continue
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($arch) -and ($row.PSObject.Properties.Name -contains 'arch')) {
+            if ($row.arch -ne $arch) {
+                continue
+            }
+        }
+
+        try {
+            $langResult = Invoke-UupDumpApi listlangs @{ id = $candidateId }
+        } catch {
+            continue
+        }
+
+        $langResponse = if ($langResult -and $langResult.PSObject.Properties.Name -contains 'response') { $langResult.response } else { $null }
+        $langFancy = if ($langResponse -and $langResponse.PSObject.Properties.Name -contains 'langFancyNames') { $langResponse.langFancyNames } else { $null }
+        $candidateLangs = @(Get-UupDumpKeys $langFancy)
+        if ($candidateLangs.Count -eq 0 -and $langResponse -and $langResponse.PSObject.Properties.Name -contains 'langList') {
+            $candidateLangs = @($langResponse.langList)
+        }
+
+        if ($candidateLangs -notcontains $lang) {
+            continue
+        }
+
+        try {
+            $editionResult = Invoke-UupDumpApi listeditions @{ id = $candidateId; lang = $lang }
+        } catch {
+            continue
+        }
+
+        $editionResponse = if ($editionResult -and $editionResult.PSObject.Properties.Name -contains 'response') { $editionResult.response } else { $null }
+        $editionFancy = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
+        $candidateEditions = @(Get-UupDumpKeys $editionFancy)
+
+        if ($candidateEditions -contains $edition) {
+            $candidateUpdateInfo = if ($langResponse -and $langResponse.PSObject.Properties.Name -contains 'updateInfo') { $langResponse.updateInfo } else { $null }
+            return [PSCustomObject]@{
+                id = $candidateId
+                langs = $candidateLangs
+                editions = $candidateEditions
+                updateInfo = $candidateUpdateInfo
+            }
+        }
+    }
+
+    return $null
+}
+
 function Get-UupDumpIso($name, $target) {
     Write-Host "Getting the $name metadata"
     $result = Invoke-UupDumpApi listid @{
@@ -244,6 +312,21 @@ function Get-UupDumpIso($name, $target) {
                 $langs = @($response.langList)
             }
 
+            $editionsFromPrimaryResolver = @()
+            if ($langs.Count -eq 0) {
+                Write-Host "Primary listlangs returned no languages. Trying alternate Railway build ID."
+                $resolvedPrimary = Resolve-UupDumpPrimaryCompatibleBuild $_.build $_.arch 'en-us' $target.edition $id
+                if ($resolvedPrimary) {
+                    $id = $resolvedPrimary.id
+                    $langs = @($resolvedPrimary.langs)
+                    $editionsFromPrimaryResolver = @($resolvedPrimary.editions)
+                    if ($resolvedPrimary.updateInfo) {
+                        $updateInfo = $resolvedPrimary.updateInfo
+                    }
+                    Write-Host "Using alternate Railway build ID $id for metadata and downloads."
+                }
+            }
+
             if ($langs.Count -eq 0) {
                 Write-Host "Primary listlangs returned no languages. Retrying upstream."
                 try {
@@ -268,26 +351,27 @@ function Get-UupDumpIso($name, $target) {
                 }
             }
 
-            if ($langs.Count -eq 0) {
-                Write-Host "No languages reported by APIs. Defaulting to $DEFAULT_UUP_LANG."
-                $langs = @($DEFAULT_UUP_LANG)
-            }
-
             $_ | Add-Member -NotePropertyMembers @{
                 langs = $langs
                 info = $updateInfo
+                selectedId = $id
             } -Force
-            $editions = if ($langs -contains $DEFAULT_UUP_LANG) {
+            $editions = if ($langs -contains 'en-us') {
                 Write-Host "Getting the $name $id editions metadata"
                 $editionKeys = @()
+                if ($editionsFromPrimaryResolver.Count -gt 0) {
+                    $editionKeys = @($editionsFromPrimaryResolver)
+                }
                 try {
-                    $result = Invoke-UupDumpApi listeditions @{
-                        id = $id
-                        lang = $DEFAULT_UUP_LANG
+                    if ($editionKeys.Count -eq 0) {
+                        $result = Invoke-UupDumpApi listeditions @{
+                            id = $id
+                            lang = 'en-us'
+                        }
+                        $editionResponse = if ($result -and $result.PSObject.Properties.Name -contains 'response') { $result.response } else { $null }
+                        $editionFancyNames = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
+                        $editionKeys = @(Get-UupDumpKeys $editionFancyNames)
                     }
-                    $editionResponse = if ($result -and $result.PSObject.Properties.Name -contains 'response') { $result.response } else { $null }
-                    $editionFancyNames = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
-                    $editionKeys = @(Get-UupDumpKeys $editionFancyNames)
                 } catch {
                     Write-Host "WARN: primary listeditions failed: $_"
                 }
@@ -297,7 +381,7 @@ function Get-UupDumpIso($name, $target) {
                     try {
                         $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
                             id = $id
-                            lang = $DEFAULT_UUP_LANG
+                            lang = 'en-us'
                         }
                         $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
                         $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
@@ -313,14 +397,9 @@ function Get-UupDumpIso($name, $target) {
                     }
                 }
 
-                if ($editionKeys.Count -eq 0) {
-                    Write-Host "No editions reported by APIs. Defaulting to requested edition $($target.edition)."
-                    $editionKeys = @($target.edition)
-                }
-
                 $editionKeys
             } else {
-                Write-Host "Skipping. Expected langs=$DEFAULT_UUP_LANG. Got langs=$($langs -join ',')."
+                Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 @()
             }
             $_ | Add-Member -NotePropertyMembers @{
@@ -346,8 +425,8 @@ function Get-UupDumpIso($name, $target) {
                 Write-Host "Skipping. Expected ring=$expectedRing. Got ring=$ring."
                 $result = $false
             }
-            if ($langs -notcontains $DEFAULT_UUP_LANG) {
-                Write-Host "Skipping. Expected langs=$DEFAULT_UUP_LANG. Got langs=$($langs -join ',')."
+            if ($langs -notcontains 'en-us') {
+                Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 $result = $false
             }
             if ($editions -notcontains $target.edition) {
@@ -358,7 +437,11 @@ function Get-UupDumpIso($name, $target) {
         } `
         | Select-Object -First 1 `
         | ForEach-Object {
-            $id = $_.uuid
+            $id = if ($_.PSObject.Properties.Name -contains 'selectedId') {
+                $_.selectedId
+            } else {
+                $_.uuid
+            }
             $webBaseUrl = if ($_.PSObject.Properties.Name -contains 'sourceWebBaseUrl') {
                 $_.sourceWebBaseUrl
             } else {
@@ -378,13 +461,13 @@ function Get-UupDumpIso($name, $target) {
                 virtualEdition = $target.virtualEdition
                 apiUrl = "$jsonApiBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
-                    lang = $DEFAULT_UUP_LANG
+                    lang = 'en-us'
                     edition = $target.edition
                     #noLinks = '1' # do not return the files download urls.
                 })
                 downloadUrl = "$webBaseUrl/download.php?" + (New-QueryString @{
                     id = $id
-                    pack = $DEFAULT_UUP_LANG
+                    pack = 'en-us'
                     edition = $target.edition
                 })
                 # NB you must use the HTTP POST method to invoke this packageUrl
@@ -394,7 +477,7 @@ function Get-UupDumpIso($name, $target) {
                 #           autodl=3 updates=1 cleanup=1 virtualEditions[]=Enterprise
                 downloadPackageUrl = "$webBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
-                    pack = $DEFAULT_UUP_LANG
+                    pack = 'en-us'
                     edition = $target.edition
                 })
             }
