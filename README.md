@@ -63,7 +63,7 @@ The ISO metadata is a JSON document alike:
         "downloadPackageUrl": "https://uup-api.42web.io/uup-api/get.php?edition=ServerStandard&pack=en-us&id=854d29b2-edbc-4959-a3e2-8a61f0900a7c",
         "id": "854d29b2-edbc-4959-a3e2-8a61f0900a7c",
         "downloadUrl": "https://uup-api.42web.io/uup-api/download.php?edition=ServerStandard&pack=en-us&id=854d29b2-edbc-4959-a3e2-8a61f0900a7c",
-        "apiUrl": "https://uup-api.42web.io/uup-api/get.php?lang=en-us&edition=ServerStandard&id=854d29b2-edbc-4959-a3e2-8a61f0900a7c"
+        "apiUrl": "https://uup-api.42web.io/uup-api/json-api/get.php?lang=en-us&edition=ServerStandard&id=854d29b2-edbc-4959-a3e2-8a61f0900a7c"
     }
 }
 ```

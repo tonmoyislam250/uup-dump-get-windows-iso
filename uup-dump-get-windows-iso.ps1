@@ -47,7 +47,7 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
         try {
             return Invoke-RestMethod `
                 -Method Get `
-                -Uri "https://uup-api.42web.io/uup-api/$name.php" `
+                -Uri "https://uup-api.42web.io/uup-api/json-api/$name.php" `
                 -Body $body
         } catch {
             Write-Host "WARN: failed the uup-dump api $name request: $_"
@@ -163,7 +163,7 @@ function Get-UupDumpIso($name, $target) {
                 id = $id
                 edition = $target.edition
                 virtualEdition = $target.virtualEdition
-                apiUrl = 'https://uup-api.42web.io/uup-api/get.php?' + (New-QueryString @{
+                apiUrl = 'https://uup-api.42web.io/uup-api/json-api/get.php?' + (New-QueryString @{
                     id = $id
                     lang = 'en-us'
                     edition = $target.edition
