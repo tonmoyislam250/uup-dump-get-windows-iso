@@ -18,7 +18,7 @@ $TARGETS = @{
     # see https://en.wikipedia.org/wiki/Windows_11
     # see https://en.wikipedia.org/wiki/Windows_11_version_history
     "windows-11" = @{
-        search = "windows 11 26200 amd64" # aka 25H2
+        search = "windows 11 28000 amd64" # aka 25H2
         edition = "Professional"
         virtualEdition = "Enterprise"
     }
@@ -178,6 +178,7 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
 
     $arch = if ($updateInfo.PSObject.Properties.Name -contains 'arch') { $updateInfo.arch } else { $null }
     $title = if ($updateInfo.PSObject.Properties.Name -contains 'title') { $updateInfo.title } else { '' }
+    $sourceFamily = Get-UupDumpTitleFamily $title
 
     $fallbackId = $updateId
     $preferredSibling = $null
@@ -194,6 +195,12 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
 
         if ($row.uuid -eq $updateId) {
             $fallbackId = $row.uuid
+            continue
+        }
+
+        $candidateFamily = Get-UupDumpTitleFamily $row.title
+        $familyCompatible = ($sourceFamily -eq 'generic' -or $candidateFamily -eq 'generic' -or $candidateFamily -eq $sourceFamily)
+        if (-not $familyCompatible) {
             continue
         }
 
@@ -222,6 +229,30 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
     }
 
     return $fallbackId
+}
+
+function Get-UupDumpTitleFamily([string]$title) {
+    if ([string]::IsNullOrWhiteSpace($title)) {
+        return 'generic'
+    }
+
+    if ($title -match 'Azure Stack HCI') {
+        return 'hci'
+    }
+
+    if ($title -match 'server operating system|Windows Server') {
+        return 'server'
+    }
+
+    if ($title -match 'Windows 11') {
+        return 'win11'
+    }
+
+    if ($title -match 'Windows 10') {
+        return 'win10'
+    }
+
+    return 'generic'
 }
 
 function Test-UupDumpPackageAvailability([string]$webBaseUrl, [string]$id, [string]$edition, [string]$virtualEdition) {
