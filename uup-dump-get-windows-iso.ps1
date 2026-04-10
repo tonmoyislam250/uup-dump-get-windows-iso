@@ -89,6 +89,10 @@ function Get-UupDumpKeys($value) {
         return @()
     }
 
+    if ($value -is [string]) {
+        return @($value)
+    }
+
     if ($value -is [hashtable]) {
         return @($value.Keys)
     }
@@ -175,7 +179,7 @@ function Get-UupDumpIso($name, $target) {
             if ($result.response.updateInfo.build -ne $_.build) {
                 throw 'for some reason listlangs returned an unexpected build'
             }
-            $langs = Get-UupDumpKeys $result.response.langFancyNames
+            $langs = @(Get-UupDumpKeys $result.response.langFancyNames)
             if ($langs.Count -eq 0 -and $result.response.PSObject.Properties.Name -contains 'langList') {
                 $langs = @($result.response.langList)
             }
@@ -189,7 +193,7 @@ function Get-UupDumpIso($name, $target) {
                     id = $id
                     lang = 'en-us'
                 }
-                Get-UupDumpKeys $result.response.editionFancyNames
+                @(Get-UupDumpKeys $result.response.editionFancyNames)
             } else {
                 Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 @()
