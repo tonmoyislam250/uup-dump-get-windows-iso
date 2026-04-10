@@ -34,6 +34,7 @@ $UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
 $UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
 $UUP_FALLBACK_WEB_BASE_URL = 'https://uupdump.net'
 $UUP_JSON_API_FALLBACK_BASE_URL = 'https://uupdump.net/json-api'
+$DEFAULT_UUP_LANG = 'en-us'
 
 function New-QueryString([hashtable]$parameters) {
     @($parameters.GetEnumerator() | ForEach-Object {
@@ -267,17 +268,22 @@ function Get-UupDumpIso($name, $target) {
                 }
             }
 
+            if ($langs.Count -eq 0) {
+                Write-Host "No languages reported by APIs. Defaulting to $DEFAULT_UUP_LANG."
+                $langs = @($DEFAULT_UUP_LANG)
+            }
+
             $_ | Add-Member -NotePropertyMembers @{
                 langs = $langs
                 info = $updateInfo
             } -Force
-            $editions = if ($langs -contains 'en-us') {
+            $editions = if ($langs -contains $DEFAULT_UUP_LANG) {
                 Write-Host "Getting the $name $id editions metadata"
                 $editionKeys = @()
                 try {
                     $result = Invoke-UupDumpApi listeditions @{
                         id = $id
-                        lang = 'en-us'
+                        lang = $DEFAULT_UUP_LANG
                     }
                     $editionResponse = if ($result -and $result.PSObject.Properties.Name -contains 'response') { $result.response } else { $null }
                     $editionFancyNames = if ($editionResponse -and $editionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $editionResponse.editionFancyNames } else { $null }
@@ -291,7 +297,7 @@ function Get-UupDumpIso($name, $target) {
                     try {
                         $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
                             id = $id
-                            lang = 'en-us'
+                            lang = $DEFAULT_UUP_LANG
                         }
                         $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
                         $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
@@ -307,9 +313,14 @@ function Get-UupDumpIso($name, $target) {
                     }
                 }
 
+                if ($editionKeys.Count -eq 0) {
+                    Write-Host "No editions reported by APIs. Defaulting to requested edition $($target.edition)."
+                    $editionKeys = @($target.edition)
+                }
+
                 $editionKeys
             } else {
-                Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
+                Write-Host "Skipping. Expected langs=$DEFAULT_UUP_LANG. Got langs=$($langs -join ',')."
                 @()
             }
             $_ | Add-Member -NotePropertyMembers @{
@@ -335,8 +346,8 @@ function Get-UupDumpIso($name, $target) {
                 Write-Host "Skipping. Expected ring=$expectedRing. Got ring=$ring."
                 $result = $false
             }
-            if ($langs -notcontains 'en-us') {
-                Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
+            if ($langs -notcontains $DEFAULT_UUP_LANG) {
+                Write-Host "Skipping. Expected langs=$DEFAULT_UUP_LANG. Got langs=$($langs -join ',')."
                 $result = $false
             }
             if ($editions -notcontains $target.edition) {
@@ -367,13 +378,13 @@ function Get-UupDumpIso($name, $target) {
                 virtualEdition = $target.virtualEdition
                 apiUrl = "$jsonApiBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
-                    lang = 'en-us'
+                    lang = $DEFAULT_UUP_LANG
                     edition = $target.edition
                     #noLinks = '1' # do not return the files download urls.
                 })
                 downloadUrl = "$webBaseUrl/download.php?" + (New-QueryString @{
                     id = $id
-                    pack = 'en-us'
+                    pack = $DEFAULT_UUP_LANG
                     edition = $target.edition
                 })
                 # NB you must use the HTTP POST method to invoke this packageUrl
@@ -383,7 +394,7 @@ function Get-UupDumpIso($name, $target) {
                 #           autodl=3 updates=1 cleanup=1 virtualEditions[]=Enterprise
                 downloadPackageUrl = "$webBaseUrl/get.php?" + (New-QueryString @{
                     id = $id
-                    pack = 'en-us'
+                    pack = $DEFAULT_UUP_LANG
                     edition = $target.edition
                 })
             }
