@@ -84,6 +84,43 @@ function Get-UupDumpBuildRows($builds) {
     return @()
 }
 
+function Get-UupDumpKeys($value) {
+    if ($null -eq $value) {
+        return @()
+    }
+
+    if ($value -is [hashtable]) {
+        return @($value.Keys)
+    }
+
+    if ($value -is [array]) {
+        if ($value.Count -eq 0) {
+            return @()
+        }
+
+        if ($value[0] -is [string]) {
+            return @($value)
+        }
+
+        if ($value[0].PSObject.Properties.Name -contains 'Name') {
+            return @($value | ForEach-Object { $_.Name })
+        }
+
+        if ($value[0].PSObject.Properties.Name -contains 'Key') {
+            return @($value | ForEach-Object { $_.Key })
+        }
+
+        return @()
+    }
+
+    $propertyNames = @($value.PSObject.Properties.Name)
+    if ($propertyNames.Count -gt 0) {
+        return $propertyNames
+    }
+
+    return @()
+}
+
 function Get-UupDumpIso($name, $target) {
     Write-Host "Getting the $name metadata"
     $result = Invoke-UupDumpApi listid @{
@@ -138,21 +175,24 @@ function Get-UupDumpIso($name, $target) {
             if ($result.response.updateInfo.build -ne $_.build) {
                 throw 'for some reason listlangs returned an unexpected build'
             }
+            $langs = Get-UupDumpKeys $result.response.langFancyNames
+            if ($langs.Count -eq 0 -and $result.response.PSObject.Properties.Name -contains 'langList') {
+                $langs = @($result.response.langList)
+            }
             $_ | Add-Member -NotePropertyMembers @{
-                langs = $result.response.langFancyNames
+                langs = $langs
                 info = $result.response.updateInfo
             } -Force
-            $langs = $_.langs.PSObject.Properties.Name
             $editions = if ($langs -contains 'en-us') {
                 Write-Host "Getting the $name $id editions metadata"
                 $result = Invoke-UupDumpApi listeditions @{
                     id = $id
                     lang = 'en-us'
                 }
-                $result.response.editionFancyNames
+                Get-UupDumpKeys $result.response.editionFancyNames
             } else {
                 Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
-                [PSCustomObject]@{}
+                @()
             }
             $_ | Add-Member -NotePropertyMembers @{
                 editions = $editions
@@ -165,8 +205,8 @@ function Get-UupDumpIso($name, $target) {
             #   2. have the english language
             #   3. match the requested edition
             $ring = $_.info.ring
-            $langs = $_.langs.PSObject.Properties.Name
-            $editions = $_.editions.PSObject.Properties.Name
+            $langs = @($_.langs)
+            $editions = @($_.editions)
             $result = $true
             $expectedRing = if ($target.PSObject.Properties.Name -contains 'ring') {
                 $target.ring
