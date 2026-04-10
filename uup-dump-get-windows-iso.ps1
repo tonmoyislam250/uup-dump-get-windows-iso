@@ -59,14 +59,45 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
     throw "timeout making the uup-dump api $name request"
 }
 
+function Get-UupDumpBuildRows($builds) {
+    if ($null -eq $builds) {
+        return @()
+    }
+
+    if ($builds -is [array]) {
+        return @($builds)
+    }
+
+    if ($builds -is [hashtable]) {
+        return @($builds.Values)
+    }
+
+    if ($builds.PSObject.Properties.Name -contains 'uuid') {
+        return @($builds)
+    }
+
+    $values = @($builds.PSObject.Properties | ForEach-Object { $_.Value })
+    if ($values.Count -gt 0 -and $values[0] -and $values[0].PSObject.Properties.Name -contains 'uuid') {
+        return $values
+    }
+
+    return @()
+}
+
 function Get-UupDumpIso($name, $target) {
     Write-Host "Getting the $name metadata"
     $result = Invoke-UupDumpApi listid @{
         search = $target.search
     }
-    $result.response.builds.PSObject.Properties `
+
+    $buildRows = Get-UupDumpBuildRows $result.response.builds
+    if ($buildRows.Count -eq 0) {
+        throw "listid returned no builds for search '$($target.search)'"
+    }
+
+    $buildRows `
         | ForEach-Object {
-            $id = $_.Value.uuid
+            $id = $_.uuid
             $uupDumpUrl = "$UUP_WEB_BASE_URL/selectlang.php?" + (New-QueryString @{
                 id = $id
             })
@@ -75,7 +106,7 @@ function Get-UupDumpIso($name, $target) {
         } `
         | Where-Object {
             # ignore previews when they are not explicitly requested.
-            $result = $target.search -like '*preview*' -or $_.Value.title -notlike '*preview*'
+            $result = $target.search -like '*preview*' -or $_.title -notlike '*preview*'
             if (!$result) {
                 Write-Host "Skipping. Expected preview=false. Got preview=true."
             }
@@ -99,19 +130,19 @@ function Get-UupDumpIso($name, $target) {
             #     "created": 1649783041,
             #     "sha256ready": true
             #   }
-            $id = $_.Value.uuid
+            $id = $_.uuid
             Write-Host "Getting the $name $id langs metadata"
             $result = Invoke-UupDumpApi listlangs @{
                 id = $id
             }
-            if ($result.response.updateInfo.build -ne $_.Value.build) {
+            if ($result.response.updateInfo.build -ne $_.build) {
                 throw 'for some reason listlangs returned an unexpected build'
             }
-            $_.Value | Add-Member -NotePropertyMembers @{
+            $_ | Add-Member -NotePropertyMembers @{
                 langs = $result.response.langFancyNames
                 info = $result.response.updateInfo
-            }
-            $langs = $_.Value.langs.PSObject.Properties.Name
+            } -Force
+            $langs = $_.langs.PSObject.Properties.Name
             $editions = if ($langs -contains 'en-us') {
                 Write-Host "Getting the $name $id editions metadata"
                 $result = Invoke-UupDumpApi listeditions @{
@@ -123,9 +154,9 @@ function Get-UupDumpIso($name, $target) {
                 Write-Host "Skipping. Expected langs=en-us. Got langs=$($langs -join ',')."
                 [PSCustomObject]@{}
             }
-            $_.Value | Add-Member -NotePropertyMembers @{
+            $_ | Add-Member -NotePropertyMembers @{
                 editions = $editions
-            }
+            } -Force
             $_
         } `
         | Where-Object {
@@ -133,9 +164,9 @@ function Get-UupDumpIso($name, $target) {
             #   1. are from the expected ring/channel (default retail)
             #   2. have the english language
             #   3. match the requested edition
-            $ring = $_.Value.info.ring
-            $langs = $_.Value.langs.PSObject.Properties.Name
-            $editions = $_.Value.editions.PSObject.Properties.Name
+            $ring = $_.info.ring
+            $langs = $_.langs.PSObject.Properties.Name
+            $editions = $_.editions.PSObject.Properties.Name
             $result = $true
             $expectedRing = if ($target.PSObject.Properties.Name -contains 'ring') {
                 $target.ring
@@ -158,11 +189,11 @@ function Get-UupDumpIso($name, $target) {
         } `
         | Select-Object -First 1 `
         | ForEach-Object {
-            $id = $_.Value.uuid
+            $id = $_.uuid
             [PSCustomObject]@{
                 name = $name
-                title = $_.Value.title
-                build = $_.Value.build
+                title = $_.title
+                build = $_.build
                 id = $id
                 edition = $target.edition
                 virtualEdition = $target.virtualEdition
