@@ -47,7 +47,7 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
         try {
             return Invoke-RestMethod `
                 -Method Get `
-                -Uri "https://api.uupdump.net/$name.php" `
+                -Uri "https://uup-api.42web.io/uup-api/$name.php" `
                 -Body $body
         } catch {
             Write-Host "WARN: failed the uup-dump api $name request: $_"
@@ -64,7 +64,7 @@ function Get-UupDumpIso($name, $target) {
     $result.response.builds.PSObject.Properties `
         | ForEach-Object {
             $id = $_.Value.uuid
-            $uupDumpUrl = 'https://uupdump.net/selectlang.php?' + (New-QueryString @{
+            $uupDumpUrl = 'https://uup-api.42web.io/uup-api/selectlang.php?' + (New-QueryString @{
                 id = $id
             })
             Write-Host "Processing $name $id ($uupDumpUrl)"
@@ -163,13 +163,13 @@ function Get-UupDumpIso($name, $target) {
                 id = $id
                 edition = $target.edition
                 virtualEdition = $target.virtualEdition
-                apiUrl = 'https://api.uupdump.net/get.php?' + (New-QueryString @{
+                apiUrl = 'https://uup-api.42web.io/uup-api/get.php?' + (New-QueryString @{
                     id = $id
                     lang = 'en-us'
                     edition = $target.edition
                     #noLinks = '1' # do not return the files download urls.
                 })
-                downloadUrl = 'https://uupdump.net/download.php?' + (New-QueryString @{
+                downloadUrl = 'https://uup-api.42web.io/uup-api/download.php?' + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
@@ -179,7 +179,7 @@ function Get-UupDumpIso($name, $target) {
                 #           autodl=2 updates=1 cleanup=1
                 #           OR
                 #           autodl=3 updates=1 cleanup=1 virtualEditions[]=Enterprise
-                downloadPackageUrl = 'https://uupdump.net/get.php?' + (New-QueryString @{
+                downloadPackageUrl = 'https://uup-api.42web.io/uup-api/get.php?' + (New-QueryString @{
                     id = $id
                     pack = 'en-us'
                     edition = $target.edition
