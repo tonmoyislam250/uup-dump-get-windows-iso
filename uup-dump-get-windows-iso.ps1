@@ -54,6 +54,10 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
                 -Uri "$UUP_JSON_API_BASE_URL/$name.php" `
                 -Body $body
         } catch {
+            $errorText = "$_ $($_.Exception.Message) $($_.ErrorDetails.Message)"
+            if ($errorText -match 'UNSUPPORTED_LANG|UNSUPPORTED_ID|INVALID_PARAM|MISSING_PARAM') {
+                throw
+            }
             Write-Host "WARN: failed the uup-dump api $name request: $_"
         }
     }
@@ -74,6 +78,10 @@ function Invoke-UupDumpApiFallback([string]$name, [hashtable]$body) {
                 -Uri "$UUP_JSON_API_FALLBACK_BASE_URL/$name.php" `
                 -Body $body
         } catch {
+            $errorText = "$_ $($_.Exception.Message) $($_.ErrorDetails.Message)"
+            if ($errorText -match 'UNSUPPORTED_LANG|UNSUPPORTED_ID|INVALID_PARAM|MISSING_PARAM') {
+                throw
+            }
             Write-Host "WARN: failed the upstream uup-dump api $name request: $_"
         }
     }
