@@ -1,10 +1,17 @@
 name: build
 on:
-  push:
   workflow_dispatch:
     inputs:
-      windows11_build:
-        description: 'Optional Windows 11 build (e.g. 26100.2033). Leave empty for latest.'
+      windows_target:
+        description: 'Windows version to build'
+        required: true
+        type: choice
+        options:
+          - windows-10
+          - windows-11
+        default: 'windows-11'
+      build:
+        description: 'Optional build number (e.g. 26100.2033). Leave empty for latest.'
         required: false
         type: string
         default: ''
@@ -13,11 +20,6 @@ on:
     - cron: '0 0 17 * *' # every month, the 17th day.
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - name: windows-11
-          - name: windows-2022
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -32,9 +34,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $args = @('${{ matrix.name }}', 'c:/output')
-          if ('${{ matrix.name }}' -eq 'windows-11' -and '${{ inputs.windows11_build }}') {
-            $args += @('-build', '${{ inputs.windows11_build }}')
+          $args = @('${{ inputs.windows_target || 'windows-11' }}', 'c:/output')
+          if ('${{ inputs.build }}') {
+            $args += @('-build', '${{ inputs.build }}')
           }
           & ./uup-dump-get-windows-iso.ps1 @args
       - name: Show available disk space after build
@@ -54,7 +56,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
+          name: ${{ inputs.windows_target || 'windows-11' }}
           path: |
             c:/output/*.json
             c:/output/*.iso
