@@ -6,10 +6,13 @@ This shrink wraps the [UUP dump](https://git.uupdump.net/uup-dump) project into 
 
 This must be executed in a Windows 2022 host.
 
-This supports the following Windows Editions:
+This supports the following presets:
 
-* `windows-11`: Windows 11 22631 (aka 23H2) Enterprise
+* `windows-11`: latest Windows 11 Enterprise (amd64)
+* `windows-10`: latest Windows 10 Enterprise (amd64)
 * `windows-2022`: Windows Server 2022 20348 (aka 21H2) Standard
+
+It also supports fully custom Windows 10/11 build selection with command line options.
 
 **NB** The Windows Server 2019 iso source files are not available in the Unified Update Platform (UUP) and cannot be downloaded by UUP dump.
 
@@ -20,6 +23,40 @@ Get the latest Windows Server 2022 iso:
 ```bash
 powershell uup-dump-get-windows-iso.ps1 windows-2022
 ```
+
+Get the latest Windows 10 ISO:
+
+```bash
+powershell uup-dump-get-windows-iso.ps1 windows-10
+```
+
+Get a specific Windows 11 build (example: 26100.2033):
+
+```bash
+powershell uup-dump-get-windows-iso.ps1 windows-11 -build 26100.2033
+```
+
+Get a specific Windows 10 build (example: 19045.5854):
+
+```bash
+powershell uup-dump-get-windows-iso.ps1 windows-10 -build 19045.5854
+```
+
+Use a fully custom query and edition (works for Windows 10/11 variants):
+
+```bash
+powershell uup-dump-get-windows-iso.ps1 -search "windows 11 26100 amd64" -edition Professional -virtualEdition Enterprise
+```
+
+Useful options:
+
+* `-build <major.minor>`: force a specific build for `windows-10` or `windows-11`.
+* `-search <query>`: custom `listid` query.
+* `-edition <name>`: edition to download (e.g. `Professional`, `ServerStandard`).
+* `-virtualEdition <name>`: optional virtual edition (e.g. `Enterprise`).
+* `-ring <name>`: expected ring filter (default `RETAIL`).
+* `-arch <arch>`: architecture hint used when composing `-build` query (default `amd64`).
+* `-destinationDirectory <dir>`: output folder (default `output`).
 
 When everything works correctly, you'll have the iso in the `output` directory at, e.g., `output/windows-2022.iso`.
 

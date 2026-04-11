@@ -1,7 +1,13 @@
 #!/usr/bin/pwsh
 param(
     [string]$windowsTargetName,
-    [string]$destinationDirectory='output'
+    [string]$destinationDirectory='output',
+    [string]$build,
+    [string]$search,
+    [string]$edition,
+    [string]$virtualEdition,
+    [string]$ring,
+    [string]$arch='amd64'
 )
 
 Set-StrictMode -Version Latest
@@ -18,7 +24,12 @@ $TARGETS = @{
     # see https://en.wikipedia.org/wiki/Windows_11
     # see https://en.wikipedia.org/wiki/Windows_11_version_history
     "windows-11" = @{
-        search = "windows 11 26200 amd64" # aka 25H2
+        search = "windows 11 amd64"
+        edition = "Professional"
+        virtualEdition = "Enterprise"
+    }
+    "windows-10" = @{
+        search = "windows 10 amd64"
         edition = "Professional"
         virtualEdition = "Enterprise"
     }
@@ -27,6 +38,77 @@ $TARGETS = @{
         search = "feature update server operating system 20348 amd64" # aka 21H2. Mainstream EOL: October 13, 2026.
         edition = "ServerStandard"
         virtualEdition = $null
+    }
+}
+
+function Resolve-UupDumpTarget($windowsTargetName, $build, $search, $edition, $virtualEdition, $ring, $arch) {
+    $name = $windowsTargetName
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        if (-not [string]::IsNullOrWhiteSpace($search)) {
+            $name = 'custom'
+        } else {
+            $name = 'windows-11'
+        }
+    }
+
+    $target = $null
+    if ($TARGETS.ContainsKey($name)) {
+        $target = @{}
+        foreach ($k in $TARGETS[$name].Keys) {
+            $target[$k] = $TARGETS[$name][$k]
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($search)) {
+        $target = @{}
+    } else {
+        throw "Unknown target '$name'. Use windows-10, windows-11, windows-2022, or pass -search."
+    }
+
+    $targetSearch = if (-not [string]::IsNullOrWhiteSpace($search)) {
+        $search
+    } elseif (-not [string]::IsNullOrWhiteSpace($build) -and ($name -eq 'windows-10' -or $name -eq 'windows-11')) {
+        "$($name -replace '-', ' ') $build $arch"
+    } else {
+        $target.search
+    }
+
+    if ([string]::IsNullOrWhiteSpace($targetSearch)) {
+        throw 'A search query could not be determined. Provide -search or a known target.'
+    }
+
+    $targetEdition = if (-not [string]::IsNullOrWhiteSpace($edition)) {
+        $edition
+    } elseif ($target.ContainsKey('edition')) {
+        $target.edition
+    } else {
+        'Professional'
+    }
+
+    $targetVirtualEdition = if ($PSBoundParameters.ContainsKey('virtualEdition')) {
+        $virtualEdition
+    } elseif ($target.ContainsKey('virtualEdition')) {
+        $target.virtualEdition
+    } elseif ($name -eq 'windows-10' -or $name -eq 'windows-11') {
+        'Enterprise'
+    } else {
+        $null
+    }
+
+    $targetRing = if (-not [string]::IsNullOrWhiteSpace($ring)) {
+        $ring
+    } elseif ($target.ContainsKey('ring')) {
+        $target.ring
+    } else {
+        'RETAIL'
+    }
+
+    return [PSCustomObject]@{
+        name = $name
+        target = @{
+            search = $targetSearch
+            edition = $targetEdition
+            virtualEdition = $targetVirtualEdition
+            ring = $targetRing
+        }
     }
 }
 
@@ -613,7 +695,10 @@ function Get-IsoWindowsImages($isoPath) {
 }
 
 function Get-WindowsIso($name, $destinationDirectory) {
-    $iso = Get-UupDumpIso $name $TARGETS.$name
+    $resolved = Resolve-UupDumpTarget $name $build $search $edition $virtualEdition $ring $arch
+    $resolvedName = $resolved.name
+    $resolvedTarget = $resolved.target
+    $iso = Get-UupDumpIso $resolvedName $resolvedTarget
 
     if ($null -eq $iso) {
         throw "no matching build found for $name (ring/lang/edition filters)"
@@ -621,10 +706,10 @@ function Get-WindowsIso($name, $destinationDirectory) {
 
     # ensure the build is a version number.
     if ($iso.build -notmatch '^\d+\.\d+$') {
-        throw "unexpected $name build: $($iso.build)"
+        throw "unexpected $resolvedName build: $($iso.build)"
     }
 
-    $buildDirectory = "$destinationDirectory/$name"
+    $buildDirectory = "$destinationDirectory/$resolvedName"
     $destinationIsoPath = "$buildDirectory.iso"
     $destinationIsoMetadataPath = "$destinationIsoPath.json"
     $destinationIsoChecksumPath = "$destinationIsoPath.sha256.txt"
@@ -641,7 +726,7 @@ function Get-WindowsIso($name, $destinationDirectory) {
     } else {
         $iso.edition
     }
-    $title = "$name $edition $($iso.build)"
+    $title = "$resolvedName $edition $($iso.build)"
 
     Write-Host "Downloading the UUP dump download package for $title from $($iso.downloadPackageUrl)"
     $downloadPackageBody = if ($iso.virtualEdition) {
@@ -713,7 +798,7 @@ function Get-WindowsIso($name, $destinationDirectory) {
         -Path $destinationIsoMetadataPath `
         -Value (
             ([PSCustomObject]@{
-                name = $name
+                name = $resolvedName
                 title = $iso.title
                 build = $iso.build
                 checksum = $isoChecksum

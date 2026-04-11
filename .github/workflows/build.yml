@@ -2,6 +2,12 @@ name: build
 on:
   push:
   workflow_dispatch:
+    inputs:
+      windows11_build:
+        description: 'Optional Windows 11 build (e.g. 26100.2033). Leave empty for latest.'
+        required: false
+        type: string
+        default: ''
   schedule:
     #- cron: '0 * * * *' # hourly.
     - cron: '0 0 17 * *' # every month, the 17th day.
@@ -24,7 +30,13 @@ jobs:
       # NB we are writting outside of the current working/job directory
       #    because it does not have sufficient available disk space.
       - name: Build
-        run: pwsh uup-dump-get-windows-iso.ps1 ${{ matrix.name }} c:/output
+        shell: pwsh
+        run: |
+          $args = @('${{ matrix.name }}', 'c:/output')
+          if ('${{ matrix.name }}' -eq 'windows-11' -and '${{ inputs.windows11_build }}') {
+            $args += @('-build', '${{ inputs.windows11_build }}')
+          }
+          & ./uup-dump-get-windows-iso.ps1 @args
       - name: Show available disk space after build
         run: Get-PSDrive -PSProvider FileSystem
       - name: Build summary
