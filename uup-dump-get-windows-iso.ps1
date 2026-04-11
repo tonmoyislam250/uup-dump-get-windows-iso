@@ -178,6 +178,8 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
 
     $arch = if ($updateInfo.PSObject.Properties.Name -contains 'arch') { $updateInfo.arch } else { $null }
     $title = if ($updateInfo.PSObject.Properties.Name -contains 'title') { $updateInfo.title } else { '' }
+    $sourceFamily = Get-UupDumpTitleFamily $title
+    $sourceIsCU = Test-UupDumpIsCumulativeTitle $title
 
     $fallbackId = $updateId
     $preferredSibling = $null
@@ -194,6 +196,17 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
 
         if ($row.uuid -eq $updateId) {
             $fallbackId = $row.uuid
+            continue
+        }
+
+        $candidateFamily = Get-UupDumpTitleFamily $row.title
+        $candidateIsCU = Test-UupDumpIsCumulativeTitle $row.title
+
+        if ($sourceFamily -ne 'generic' -and $candidateFamily -ne $sourceFamily) {
+            continue
+        }
+
+        if ($sourceIsCU -ne $candidateIsCU) {
             continue
         }
 
@@ -222,6 +235,40 @@ function Resolve-UupDumpPrimaryPackSourceId([string]$updateId, $updateInfo) {
     }
 
     return $fallbackId
+}
+
+function Test-UupDumpIsCumulativeTitle([string]$title) {
+    return $title -match 'Cumulative Update'
+}
+
+function Get-UupDumpTitleFamily([string]$title) {
+    $t = $title.ToLowerInvariant()
+
+    if ($t.Contains('azure stack hci')) {
+        return 'azure_stack_hci'
+    }
+
+    if ($t.Contains('windows server') -or $t.Contains('microsoft server operating system')) {
+        return 'windows_server'
+    }
+
+    if ($t.Contains('windows 11')) {
+        return 'windows_11'
+    }
+
+    if ($t.Contains('windows 10')) {
+        return 'windows_10'
+    }
+
+    if ($t.Contains('cloud pc')) {
+        return 'cloud_pc'
+    }
+
+    if ($t.Contains('.net framework')) {
+        return 'dotnet'
+    }
+
+    return 'generic'
 }
 
 function Test-UupDumpPackageAvailability([string]$webBaseUrl, [string]$id, [string]$edition, [string]$virtualEdition) {
