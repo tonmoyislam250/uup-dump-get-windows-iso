@@ -114,8 +114,6 @@ function Resolve-UupDumpTarget($windowsTargetName, $build, $search, $edition, $v
 
 $UUP_WEB_BASE_URL = 'https://uup-api-production.up.railway.app'
 $UUP_JSON_API_BASE_URL = "$UUP_WEB_BASE_URL/json-api"
-$UUP_FALLBACK_WEB_BASE_URL = 'https://uupdump.net'
-$UUP_JSON_API_FALLBACK_BASE_URL = 'https://uupdump.net/json-api'
 
 function New-QueryString([hashtable]$parameters) {
     @($parameters.GetEnumerator() | ForEach-Object {
@@ -145,30 +143,6 @@ function Invoke-UupDumpApi([string]$name, [hashtable]$body) {
         }
     }
     throw "timeout making the uup-dump api $name request"
-}
-
-function Invoke-UupDumpApiFallback([string]$name, [hashtable]$body) {
-    # Fallback to upstream when the Railway API has incomplete transient metadata.
-    for ($n = 0; $n -lt 5; ++$n) {
-        if ($n) {
-            Write-Host "Waiting a bit before retrying the upstream uup-dump api ${name} request #$n"
-            Start-Sleep -Seconds 10
-            Write-Host "Retrying the upstream uup-dump api ${name} request #$n"
-        }
-        try {
-            return Invoke-RestMethod `
-                -Method Get `
-                -Uri "$UUP_JSON_API_FALLBACK_BASE_URL/$name.php" `
-                -Body $body
-        } catch {
-            $errorText = "$_ $($_.Exception.Message) $($_.ErrorDetails.Message)"
-            if ($errorText -match 'UNSUPPORTED_LANG|UNSUPPORTED_ID|INVALID_PARAM|MISSING_PARAM') {
-                throw
-            }
-            Write-Host "WARN: failed the upstream uup-dump api $name request: $_"
-        }
-    }
-    throw "timeout making the upstream uup-dump api $name request"
 }
 
 function Get-UupDumpBuildRows($builds) {
@@ -518,27 +492,7 @@ function Get-UupDumpIso($name, $target) {
             }
 
             if ($langs.Count -eq 0) {
-                Write-Host "Primary listlangs returned no languages. Retrying upstream."
-                try {
-                    $fallbackResult = Invoke-UupDumpApiFallback listlangs @{ id = $id }
-                    $fallbackResponse = if ($fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
-                    if ($fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'updateInfo') {
-                        $updateInfo = $fallbackResponse.updateInfo
-                    }
-                    $fallbackLangFancyNames = if ($fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'langFancyNames') { $fallbackResponse.langFancyNames } else { $null }
-                    $langs = @(Get-UupDumpKeys $fallbackLangFancyNames)
-                    if ($langs.Count -eq 0 -and $fallbackResponse -and $fallbackResponse.PSObject.Properties.Name -contains 'langList') {
-                        $langs = @($fallbackResponse.langList)
-                    }
-                    if ($langs.Count -gt 0) {
-                        $_ | Add-Member -NotePropertyMembers @{
-                            sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
-                            sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
-                        } -Force
-                    }
-                } catch {
-                    Write-Host "WARN: upstream listlangs fallback failed: $_"
-                }
+                Write-Host "WARN: Primary listlangs returned no languages."
             }
 
             $_ | Add-Member -NotePropertyMembers @{
@@ -564,24 +518,7 @@ function Get-UupDumpIso($name, $target) {
                     }
 
                     if ($editionKeys.Count -eq 0) {
-                        Write-Host "Primary listeditions returned no editions. Retrying upstream."
-                        try {
-                            $fallbackResult = Invoke-UupDumpApiFallback listeditions @{
-                                id = $id
-                                lang = 'en-us'
-                            }
-                            $fallbackEditionResponse = if ($fallbackResult -and $fallbackResult.PSObject.Properties.Name -contains 'response') { $fallbackResult.response } else { $null }
-                            $fallbackEditionFancyNames = if ($fallbackEditionResponse -and $fallbackEditionResponse.PSObject.Properties.Name -contains 'editionFancyNames') { $fallbackEditionResponse.editionFancyNames } else { $null }
-                            $editionKeys = @(Get-UupDumpKeys $fallbackEditionFancyNames)
-                            if ($editionKeys.Count -gt 0) {
-                                $_ | Add-Member -NotePropertyMembers @{
-                                    sourceWebBaseUrl = $UUP_FALLBACK_WEB_BASE_URL
-                                    sourceJsonApiBaseUrl = $UUP_JSON_API_FALLBACK_BASE_URL
-                                } -Force
-                            }
-                        } catch {
-                            Write-Host "WARN: upstream listeditions fallback failed: $_"
-                        }
+                        Write-Host "WARN: Primary listeditions returned no editions."
                     }
 
                     $editionKeys
