@@ -9,6 +9,7 @@ on:
         options:
           - windows-10
           - windows-11
+          - windows-server
         default: 'windows-11'
       build:
         description: 'Optional build number (e.g. 26100.2033). Leave empty for latest.'
