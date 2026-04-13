@@ -10,6 +10,7 @@ This supports the following presets:
 
 * `windows-11`: latest Windows 11 Enterprise (amd64)
 * `windows-10`: latest Windows 10 Enterprise (amd64)
+* `windows-server`: latest Windows Server 23H2 Datacenter Core (amd64)
 * `windows-2022`: Windows Server 2022 20348 (aka 21H2) Standard
 
 It also supports fully custom Windows 10/11 build selection with command line options.
@@ -22,6 +23,12 @@ Get the latest Windows Server 2022 iso:
 
 ```bash
 powershell uup-dump-get-windows-iso.ps1 windows-2022
+```
+
+Get the latest Windows Server 23H2 Datacenter Core iso:
+
+```bash
+powershell uup-dump-get-windows-iso.ps1 windows-server
 ```
 
 Get the latest Windows 10 ISO:

@@ -39,6 +39,12 @@ $TARGETS = @{
         edition = "ServerStandard"
         virtualEdition = $null
     }
+    # latest Windows Server branch available in UUP dump.
+    "windows-server" = @{
+        search = "windows server 23h2 amd64"
+        edition = "ServerDatacenterCore"
+        virtualEdition = $null
+    }
 }
 
 function Resolve-UupDumpTarget($windowsTargetName, $build, $search, $edition, $virtualEdition, $ring, $arch) {
@@ -60,7 +66,7 @@ function Resolve-UupDumpTarget($windowsTargetName, $build, $search, $edition, $v
     } elseif (-not [string]::IsNullOrWhiteSpace($search)) {
         $target = @{}
     } else {
-        throw "Unknown target '$name'. Use windows-10, windows-11, windows-2022, or pass -search."
+        throw "Unknown target '$name'. Use windows-10, windows-11, windows-server, windows-2022, or pass -search."
     }
 
     $targetSearch = if (-not [string]::IsNullOrWhiteSpace($search)) {
